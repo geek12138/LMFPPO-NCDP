@@ -4,34 +4,6 @@
 
 **Local Mean Field Proximal Policy Optimization with Neighbor-Dependent Cooperative Density Punishment**
 
-An official implementation for promoting cooperation in spatial public goods games.
-
-[![Python](https://img.shields.io/badge/Python-3.8%2B-blue.svg)](https://www.python.org/)
-[![PyTorch](https://img.shields.io/badge/PyTorch-1.12%2B-ee4c2c.svg)](https://pytorch.org/)
-[![NumPy](https://img.shields.io/badge/NumPy-1.21%2B-013243.svg)](https://numpy.org/)
-[![Paper](https://img.shields.io/badge/IEEE%20TCSS-2026-00629B.svg)](#citation)
-
-</div>
-
----
-
-## Table of Contents
-
-- [Introduction](#introduction)
-- [Method Overview](#method-overview)
-- [Project Structure](#project-structure)
-- [Requirements](#requirements)
-- [Quick Start](#quick-start)
-- [Arguments](#arguments)
-- [Outputs](#outputs)
-- [Experimental Results](#experimental-results)
-- [FAQ](#faq)
-- [Citation](#citation)
-- [Contact](#contact)
-- [License](#license)
-
----
-
 ## Introduction
 
 This repository is the official implementation of the paper *"Promoting Cooperation in Spatial Public Goods Games via Local Mean Field Proximal Policy Optimization With Neighbor-Dependent Cooperative Density Punishment"* (IEEE Transactions on Computational Social Systems, 2026).
@@ -51,91 +23,7 @@ Experiments show that LMFPPO-NCDP achieves fast and stable cooperation emergence
 
 ---
 
-## Method Overview
 
-### 1. Spatial Public Goods Game (SPGG)
-
-- Played on an $L \times L$ grid with **periodic boundary conditions**, where each node is an agent.
-- Interaction structure is the **von Neumann neighborhood** ($k=4$ neighbors).
-- Each agent simultaneously participates in $G=5$ public goods groups (centered on itself and its 4 neighbors).
-- Strategy set $S=\{C, D\}$: $C$ contributes 1 unit of resource, $D$ contributes nothing.
-
-The payoff of agent $i$ in a single group $g$ is:
-
-$$
-\Pi(s_i^g)=
-\begin{cases}
-\dfrac{r \cdot N_C^g}{G} - 1, & s_i^g = C \\[6pt]
-\dfrac{r \cdot N_C^g}{G}, & s_i^g = D
-\end{cases}
-$$
-
-where $N_C^g$ is the number of cooperators in group $g$ and $r>1$ is the public goods enhancement factor. The total payoff of an agent is the sum over all groups it participates in, $\Pi_i=\sum_{g\in G_i}\Pi(s_i^g)$.
-
-### 2. Local Mean Field Representation (LMF)
-
-The local region is formed by a focal agent and its 4 von Neumann neighbors, $\mathcal{G}(i)=i\cup\mathcal{N}(i)$, and the local cooperation density is defined as:
-
-$$
-\mu_i=\frac{1}{5}\sum_{j\in\mathcal{G}(i)} s_j
-$$
-
-At time $t$, the observation of each agent is encoded as a **4-dimensional feature vector**:
-
-$$
-x_t^i=\left[\,s_t^i,\; n_t^i,\; g_t,\; \mu_t^i\,\right]\in\mathbb{R}^4
-$$
-
-| Feature | Meaning |
-| --- | --- |
-| $s_t^i\in\{0,1\}$ | Agent's own current strategy |
-| $n_t^i\in\{0,\dots,5\}$ | Number of cooperators in the local region (including itself) |
-| $g_t\in[0,1]$ | Global cooperation frequency |
-| $\mu_t^i\in[0,1]$ | Local mean field (local cooperation density) |
-
-In the implementation, both $n_t^i$ and $\mu_t^i$ are computed in a single parallel pass using **circular padding plus a 3×3 convolution kernel** `[[0,1,0],[1,1,1],[0,1,0]]` (`F.conv2d` with `mode='circular'`), so feature extraction over the whole grid is **fully vectorized**.
-
-### 3. NCDP Punishment Mechanism
-
-Unlike conventional schemes that punish all defectors equally, NCDP allocates heterogeneous punishment strength based on the **local cooperation density**:
-
-$$
-R_{\text{punish}}^i=-\,p\cdot\mathbb{I}(s_i=D)\cdot N_C^{\text{neigh}}(i)
-$$
-
-where $p>0$ is the punishment strength and $N_C^{\text{neigh}}(i)$ is the number of cooperators among the von Neumann neighbors of agent $i$. The more cooperators in the neighborhood, the stronger the punishment a defector receives, which creates a **local payoff gradient** at the boundaries of cooperative clusters and systematically suppresses defection. **Cooperators bear no punishment cost whatsoever**.
-
-The total reward of an agent is:
-
-$$
-R_{\text{total}}^i=\Pi_i+R_{\text{punish}}^i
-$$
-
-### 4. Actor–Critic Network and Optimization Objective
-
-A shared feature extractor (two `Linear(64) + ReLU` layers) is followed by an actor branch (softmax over C/D probabilities) and a critic branch (state value):
-
-```python
-MeanFieldActorCritic(
-    shared = Sequential(Linear(4, 64), ReLU, Linear(64, 64), ReLU),
-    actor  = Linear(64, 2),    # policy distribution (cooperate / defect)
-    critic = Linear(64, 1),    # state value
-)
-```
-
-The optimization objective of LMFPPO (i.e. the loss function of `ppo_update()` in `LMFPPO_NCDP.py`) is:
-
-$$
-\mathcal{L}_{\text{LMFPPO}}(\theta)=\mathcal{L}_{\text{CLIP}}(\theta)+\delta\,\mathcal{L}_{\text{VF}}(\theta)-\rho\,\mathcal{L}_{\text{ENT}}(\theta)
-$$
-
-where $\mathcal{L}_{\text{CLIP}}$ is the PPO clipped surrogate objective, $\mathcal{L}_{\text{VF}}$ is the value-function MSE loss, and $\mathcal{L}_{\text{ENT}}$ is the entropy regularization term. Advantages are estimated with GAE. The corresponding code is:
-
-```python
-loss = actor_loss + self.delta * critic_loss - self.rho * entropy
-```
-
----
 
 ## Project Structure
 
@@ -154,13 +42,6 @@ LMFPPO/
     ├── run_one_Fermi.sh    # One-click script for the Fermi experiment
     └── run_QL.sh           # One-click script for the Q-learning experiment
 ```
-
-Shared payoff conventions across all implementations:
-
-- **Base payoff** `calculate_reward()`: circular convolution over the cooperator matrix gives the number of cooperators in each group, another convolution aggregates them per agent, and the cost of joining 5 groups is subtracted (cooperators pay `5.0`, defectors pay `0`).
-- **Punishment payoff** `calculate_punishment()`: assigns $-p \times N_C^{\text{neigh}}$ only at defector positions.
-- **Total payoff** `calculate_reward_with_punishment()` = base payoff + punishment payoff.
-
 ---
 
 ## Requirements
@@ -292,71 +173,6 @@ data/LMFPPO_NCDP_Punish_<timestamp>_.../
 
 Snapshots are saved by default at key time steps such as $t = 0, 1, 10, 100, 1000, 10000, 100000$ (see `run()` and `shot_pic_with_punishment()` in `LMFPPO_NCDP.py`).
 
----
-
-## Experimental Results
-
-### Hyperparameter sensitivity (paper Figs. 2–4)
-
-- **Entropy coefficient $\rho$**: the effect is non-monotonic. With $\rho=0.001$ the system still falls into all-defection at $r=5.0$, whereas with $\rho=0.01$ it reaches full cooperation at the same point → $\rho=0.01$ is used in the final setting.
-- **Learning rate $\alpha$**: too small slows down policy adaptation and delays the emergence of cooperation; too large brings no extra benefit and even delays it slightly → $\alpha=10^{-3}$ is used.
-- **Punishment strength $p$**: increasing $p$ shifts the cooperation threshold to the left, but overly strong punishment introduces non-monotonic oscillations near the threshold and reduces evolutionary stability → $p=0.5$ is used.
-
-### Ablation and statistical tests (paper Table I, 50 independent runs, 95% BCa bootstrap CI)
-
-| Algorithm | Cooperation threshold behavior |
-| --- | --- |
-| **LMFPPO-NCDP** | All-defection for $r\le 3.6$; average cooperation rate 0.82 at $r=4.1$; full cooperation at $r=4.2$ |
-| PPO-NCDP | Average cooperation rate 0.66 at $r=4.1$; full cooperation at $r=4.3$ |
-| LMFPPO | All-defection for $r\le4.9$; average cooperation rate 0.50 at $r=5.0$; full cooperation at $r=5.1$ |
-| PPO | Average cooperation rate 0.46 at $r=5.0$; full cooperation at $r=5.1$ |
-
-Conclusion: NCDP significantly lowers the cooperation threshold, and the LMF representation yields **narrower error bars and confidence intervals** near the critical threshold, indicating improved learning stability.
-
-### Comparison with state-of-the-art algorithms (paper Table II)
-
-| Algorithm | First emergence of cooperation ($r$) | Sustained cooperation ($r$) |
-| --- | --- | --- |
-| LMFPPO-NCDP ($p=1.5$) | 2.0 | 2.4 |
-| LMFPPO-NCDP ($p=1.0$) | 2.7 | 3.2 |
-| LMFPPO-NCDP ($p=0.5$) | 4.0 | 4.0 |
-| PPO-ACT | 3.6 | 4.0 |
-| TUC-PPO | 3.3 | 3.3 |
-
-### Fixed enhancement factor comparison ($r=4.0$, paper Fig. 6)
-
-| Algorithm | Evolutionary outcome |
-| --- | --- |
-| LMFPPO-NCDP | Reaches global cooperation $f_C=1.0$ within about 20 steps and keeps it |
-| LMFPPO | Shows strategy mixing first but eventually converges to all-defection (LMF alone is insufficient to sustain cooperation at $r=4.0$) |
-| Fermi update rule | Cooperators slightly dominate in the first 100 steps, defectors dominate between 100–500 steps, then it stabilizes at the mixed state $f_C\approx0.55$ |
-| Q-learning | Cooperation declines steadily early on and stabilizes at $f_C\approx0.40$ after about 100 steps |
-
----
-
-## FAQ
-
-**Q1. `scripts/run_QL.sh` reports that `main_QL.py` cannot be found?**
-The `main_QL.py` referenced by that script is not included in this repository. The Q-learning implementation lives in `QL_Feimi.py` (class `SPGG_Qlearning`); you need to write your own entry script following `main_Fermi.py` / `main_PPO.py` (the arguments are `-alpha -gamma -epsilon -is_QL -is_fermi`).
-
-**Q2. How do I change the range of the enhancement factor sweep?**
-`r_values` is hard-coded inside `main()` of each `main_*.py`:
-
-- `main_LMFPPO_NCDP.py`: `[round(i*0.1, 1) for i in range(20, 36)]` → $r\in[2.0, 3.5]$
-- `main_PPO.py`: `[round(i*0.1, 1) for i in range(30, 61)]` → $r\in[3.0, 6.0]$
-- `main_Fermi.py`: an explicit list over $r\in[2.0, 6.0]$
-
-**Q3. How do I reproduce the statistical results in the paper?**
-Set `-runs` to `50` and change `-seed` for each run (see the per-seed loop in `scripts/run_one_PPO.sh`), then compute the BCa bootstrap confidence interval over the last row of `Density_C/r<r>.txt`.
-
-**Q4. Why is the x-axis of the plots on a log-like scale?**
-All evolution curves use `plt.xscale('symlog', linthresh=1)` so that both the fast early changes and the long-term stable behavior can be displayed at the same time.
-
-**Q5. Out of memory (RAM or VRAM)?**
-Reduce `-L_num` (e.g. to 100), or keep `-batch_size 1` and lower `-epochs` accordingly.
-
----
-
 ## Citation
 
 If you find this work useful in your research, please cite:
@@ -384,11 +200,8 @@ If you find this work useful in your research, please cite:
 
 ## Contact
 
-- Jinshuo Yang — gs.jsyang25@gzu.edu.cn
 - **Zhaoqilin Yang (corresponding author)** — zqlyang@gzu.edu.cn
-- Wenjie Zhou — gs.wjzhou25@gzu.edu.cn
-- Xin Wang — xinwang3@bjtu.edu.cn
-- Youliang Tian — yltian@gzu.edu.cn
+
 
 State Key Laboratory of Public Big Data, College of Computer Science and Technology, Guizhou University, Guiyang, China.
 
